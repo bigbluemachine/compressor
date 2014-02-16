@@ -8,3 +8,7 @@ To do:
 - Reduce space usage of prefix-free coding algorithm
 - Make command-line application
 - Port to C (not C++, because I have an irrational hatred of it)
+
+Bugs:
+
+- Does not handle empty files, or files with only 1 unique symbol.
