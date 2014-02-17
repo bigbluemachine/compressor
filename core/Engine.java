@@ -2,31 +2,22 @@ package core;
 
 import io.FileInputBuffer;
 import io.FileOutputBuffer;
-import io.OutputBuffer;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 
 public class Engine {
-	static class Pair {
-		int a, b;
-
-		Pair(int aa, int bb) {
-			a = aa;
-			b = bb;
-		}
-	}
-
 	static class Table {
 		int[] depth;
 		long[] vec;
 
-		Table(int n, Node root) {
+		Table(Node root) {
 			depth = new int[256];
 			vec = new long[256];
 			Arrays.fill(depth, -1);
@@ -37,8 +28,14 @@ public class Engine {
 			if (n.l == null && n.r == null) {
 				depth[n.symbol] = d;
 				vec[n.symbol] = v;
-			} else {
+				return;
+			}
+
+			if (n.l != null) {
 				traverse(n.l, d + 1, v);
+			}
+
+			if (n.r != null) {
 				traverse(n.r, d + 1, v | 1L << d);
 			}
 		}
@@ -46,7 +43,7 @@ public class Engine {
 
 	static class Node {
 		Node l, r;
-		int symbol;
+		int symbol, id;
 
 		Node() {
 			symbol = -1;
@@ -71,9 +68,31 @@ public class Engine {
 
 			return (l != null && l.add(d - 1, s)) || (r != null && r.add(d - 1, s));
 		}
+
+		void collect(ArrayList<Node> L) {
+			L.add(this);
+
+			if (l != null) {
+				l.collect(L);
+			}
+
+			if (r != null) {
+				r.collect(L);
+			}
+		}
 	}
 
-	static Pair[] getSymbols(File file) throws Exception {
+	static class Cache {
+		Node dest;
+		ArrayList<Integer> symbols;
+
+		Cache(Node d, ArrayList<Integer> s) {
+			dest = d;
+			symbols = s;
+		}
+	}
+
+	public static int[][] getSymbols(File file) throws IOException {
 		int[] F = new int[256];
 
 		int l;
@@ -86,59 +105,42 @@ public class Engine {
 		}
 		in.close();
 
-		ArrayList<Pair> L = new ArrayList<Pair>();
+		ArrayList<int[]> L = new ArrayList<int[]>();
 		for (int i = 0; i < 256; i++) {
 			if (F[i] > 0) {
-				L.add(new Pair(i, F[i]));
+				L.add(new int[] { i, F[i] });
 			}
 		}
-		Collections.sort(L, new Comparator<Pair>() {
+		Collections.sort(L, new Comparator<int[]>() {
 			@Override
-			public int compare(Pair p, Pair q) {
-				int d = q.b - p.b;
-				return d == 0 ? p.a - q.a : d;
+			public int compare(int[] p, int[] q) {
+				int d = q[1] - p[1];
+				return d == 0 ? p[0] - q[0] : d;
 			}
 		});
 
-		return L.toArray(new Pair[0]);
+		return L.toArray(new int[0][]);
 	}
 
-	static void encodeBody(Table T, File inFile, OutputBuffer ob) throws Exception {
-		int l;
-		byte[] buf = new byte[1024];
-		FileInputStream in = new FileInputStream(inFile);
-		while ((l = in.read(buf)) != -1) {
-			for (int i = 0; i < l; i++) {
-				int b = buf[i] & 0xff;
-				ob.append(T.vec[b], T.depth[b]);
-			}
-		}
-		in.close();
-	}
-
-	static void encode(File inFile, File outFile) throws Exception {
-		// Read input
-		Pair[] S = getSymbols(inFile);
-		int symbolCount = S.length;
-		if (symbolCount < 2) {
-			throw new Error("Less than 2 symbols!");
+	public static void encode(File inFile, File outFile) throws IOException {
+		// Do nothing with empty file
+		if (inFile.length() == 0) {
+			FileOutputStream os = new FileOutputStream(outFile);
+			os.close();
+			return;
 		}
 
 		// Get prefix-free code
-		int[] symbols = new int[symbolCount];
-		int[] freqs = new int[symbolCount];
-		for (int i = 0; i < symbolCount; i++) {
-			symbols[i] = S[i].a;
-			freqs[i] = S[i].b;
-		}
-		int[] depths = PrefixFreeCode.depths(freqs);
+		int[][] S = getSymbols(inFile);
+		int symbolCount = S.length;
+		int[] depths = PrefixFreeCode.getDepths(S, symbolCount);
 
 		// Build tree
 		Node root = new Node();
-		long bodySize = 0;
+		int bodySize = 0;
 		for (int i = 0; i < symbolCount; i++) {
-			bodySize += (long) depths[i] * freqs[i];
-			root.add(depths[i], symbols[i]);
+			bodySize += depths[i] * S[i][1];
+			root.add(depths[i], S[i][0]);
 		}
 
 		// Initialize output
@@ -147,51 +149,80 @@ public class Engine {
 		// Emit table information
 		ob.append(symbolCount - 1, 8);
 		for (int i = 0; i < symbolCount; i++) {
-			ob.append(symbols[i], 8);
+			ob.append(S[i][0], 8);
 			ob.append(depths[i], 8);
 		}
 
 		// Emit padding
 		int padding = (int) ((bodySize + 3) % 8);
-		if (padding > 0) {
+		if (padding != 0) {
 			padding = 8 - padding;
 		}
 		ob.append(padding, 3);
 		ob.append(0, padding);
 
 		// Emit body
-		encodeBody(new Table(symbolCount, root), inFile, ob);
+		encodeBody(new Table(root), inFile, ob);
 		ob.close();
 	}
 
-	static void decode(File inFile, File outFile) throws Exception {
-		FileInputBuffer ib = new FileInputBuffer(new FileInputStream(inFile));
-		FileOutputBuffer ob = new FileOutputBuffer(new FileOutputStream(outFile));
-
-		if (!ib.hasMore()) {
-			ib.close();
-			ob.close();
-			throw new Error("File is empty!");
+	public static void decode(File inFile, File outFile) throws IOException {
+		// Do nothing with empty file
+		if (inFile.length() == 0) {
+			FileOutputStream os = new FileOutputStream(outFile);
+			os.close();
+			return;
 		}
+
+		// Initialize input
+		FileInputBuffer ib = new FileInputBuffer(new FileInputStream(inFile));
+		ib.fetch();
 
 		// Read table
 		Node root = new Node();
-		int tableLength = ib.readInt(8) + 1;
+		int tableLength = ib.read(8) + 1;
 		for (int i = 0; i < tableLength; i++) {
-			int symbol = ib.readInt(8);
-			int depth = ib.readInt(8);
+			int symbol = ib.read(8);
+			int depth = ib.read(8);
 			root.add(depth, symbol);
 		}
 
 		// Skip padding
-		int padding = ib.readInt(3);
-		ib.readInt(padding);
+		int padding = ib.read(3);
+		ib.read(padding);
 
-		// Read body
+		// Decode body
+		decodeBody(root, outFile, ib);
+		ib.close();
+	}
+
+	private static void encodeBody(Table lookupTable, File inFile, FileOutputBuffer ob) throws IOException {
+		int l;
+		byte[] buf = new byte[1024];
+		FileInputStream in = new FileInputStream(inFile);
+		while ((l = in.read(buf)) != -1) {
+			for (int i = 0; i < l; i++) {
+				int b = buf[i] & 0xff;
+				ob.append(lookupTable.vec[b], lookupTable.depth[b]);
+			}
+		}
+		in.close();
+	}
+
+	private static void decodeBody(Node root, File outFile, FileInputBuffer ib) throws IOException {
+		// Calculate alignment
+		int alignment = ib.getOffset();
+		if (alignment != 0) {
+			alignment = 8 - alignment;
+		}
+
+		// Initialize output
+		FileOutputBuffer ob = new FileOutputBuffer(new FileOutputStream(outFile));
 		Node curr = root;
-		while (ib.hasMore()) {
-			boolean b = ib.read();
-			if (b) {
+
+		// Read until aligned
+		for (int i = 0, v = ib.read(alignment); i < alignment; i++) {
+			if ((v & (1 << i)) > 0) {
 				if (curr.r == null) {
 					ob.append(curr.symbol, 8);
 					curr = root;
@@ -206,15 +237,56 @@ public class Engine {
 			}
 		}
 
+		// Set IDs
+		ArrayList<Node> L = new ArrayList<Node>();
+		root.collect(L);
+		for (int i = 0; i < L.size(); i++) {
+			L.get(i).id = i;
+		}
+
+		// Read rest
+		Cache[] T = new Cache[131072];
+		while (ib.hasMore()) {
+			int v = ib.read(8);
+			int key = curr.id << 8 | v;
+
+			// Cache current position
+			if (T[key] == null) {
+				ArrayList<Integer> symbols = new ArrayList<Integer>();
+				for (int i = 0; i < 8; i++) {
+					if ((v & (1 << i)) > 0) {
+						if (curr.r == null) {
+							symbols.add(curr.symbol);
+							curr = root;
+						}
+						curr = curr.r;
+					} else {
+						if (curr.l == null) {
+							symbols.add(curr.symbol);
+							curr = root;
+						}
+						curr = curr.l;
+					}
+				}
+				T[key] = new Cache(curr, symbols);
+			}
+
+			// Emit symbols
+			curr = T[key].dest;
+			for (int s : T[key].symbols) {
+				ob.append(s, 8);
+			}
+		}
+
 		// Does it add up?
 		if (curr.l != null) {
 			ib.close();
 			ob.close();
-			throw new Error("Invalid body!");
+			throw new Error("Invalid encoding!");
 		}
-		ob.append(curr.symbol, 8);
 
-		ib.close();
+		// Add last symbol
+		ob.append(curr.symbol, 8);
 		ob.close();
 	}
 }
