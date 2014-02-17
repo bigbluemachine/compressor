@@ -15,7 +15,7 @@ public abstract class InputBuffer implements Closeable {
 		this(DEFAULT_SIZE);
 	}
 
-	public InputBuffer(int n) {
+	private InputBuffer(int n) {
 		data = new byte[n];
 		bytesRead = 0;
 		currByte = 0;
@@ -27,43 +27,57 @@ public abstract class InputBuffer implements Closeable {
 			return true;
 		}
 
-		return (bytesRead = fetch()) != -1;
+		fetch();
+		currByte = 0;
+		currOffset = 0;
+		return bytesRead != -1;
 	}
 
-	public boolean read() throws IOException {
-		int value = data[currByte] & 1 << currOffset;
-
-		if (++currOffset == 8) {
-			currOffset = 0;
-			++currByte;
-		}
-
-		return value > 0;
+	public int getOffset() {
+		return currOffset;
 	}
 
-	public int readInt(int n) throws IOException {
+	public int read(int n) throws IOException {
 		int v = 0;
 
-		for (int i = 0; i < n; i++) {
-			if (read()) {
-				v |= 1 << i;
+		if (currOffset != 0) {
+			v = (data[currByte] & 0xff) >> currOffset;
+			v &= (1 << n) - 1;
+
+			if (currOffset + n < 8) {
+				currOffset += n;
+				return v;
+			} else {
+				n -= (8 - currOffset);
+				checkFetch();
 			}
 		}
+
+		for (; n >= 8; n -= 8) {
+			v <<= 8;
+			v |= data[currByte] & 0xff;
+			checkFetch();
+		}
+
+		v <<= n;
+		v |= data[currByte] & ((1 << n) - 1);
+		currOffset = n;
 
 		return v;
 	}
 
-	public long readLong(int n) throws IOException {
-		long v = 0;
+	/**
+	 * After each call, sets currByte and currOffset to 0. Expects bytesRead to
+	 * be set to the number of bytes read, or -1 if it is impossible to read.
+	 * @throws IOException
+	 */
+	public abstract void fetch() throws IOException;
 
-		for (int i = 0; i < n; i++) {
-			if (read()) {
-				v |= 1L << i;
-			}
+	private void checkFetch() throws IOException {
+		currOffset = 0;
+		if (++currByte == bytesRead) {
+			fetch();
+			currByte = 0;
 		}
-
-		return v;
 	}
-
-	public abstract int fetch() throws IOException;
 }
