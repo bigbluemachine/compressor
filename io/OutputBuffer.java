@@ -15,33 +15,47 @@ public abstract class OutputBuffer implements Closeable {
 		this(DEFAULT_SIZE);
 	}
 
-	public OutputBuffer(int n) {
+	private OutputBuffer(int n) {
 		data = new byte[size = n];
 		currByte = 0;
 		currOffset = 0;
 	}
 
-	public void append(boolean on) throws IOException {
-		if (on) {
-			data[currByte] |= 1 << currOffset;
-		} else {
-			data[currByte] &= ~(1 << currOffset);
-		}
+	public void append(long v, int n) throws IOException {
+		if (currOffset != 0) {
+			data[currByte] &= (1 << currOffset) - 1;
+			data[currByte] |= v << currOffset;
 
-		if (++currOffset == 8) {
-			currOffset = 0;
-			if (++currByte == size) {
-				flush();
-				currByte = 0;
+			if (currOffset + n < 8) {
+				currOffset += n;
+				return;
+			} else {
+				n -= (8 - currOffset);
+				v >>= (8 - currOffset);
+				checkFlush();
 			}
 		}
+
+		for (; n >= 8; n -= 8, v >>= 8) {
+			data[currByte] = (byte) v;
+			checkFlush();
+		}
+
+		data[currByte] = (byte) v;
+		currOffset = n;
 	}
 
-	public void append(long v, int n) throws IOException {
-		for (int i = 0; i < n; i++) {
-			append((v & (1 << i)) > 0);
+	/**
+	 * After each call, sets currByte and currOffset to 0.
+	 * @throws IOException
+	 */
+	public abstract void flush() throws IOException;
+
+	private void checkFlush() throws IOException {
+		currOffset = 0;
+		if (++currByte == size) {
+			flush();
+			currByte = 0;
 		}
 	}
-
-	public abstract int flush() throws IOException;
 }
