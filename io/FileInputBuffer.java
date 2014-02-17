@@ -12,13 +12,8 @@ public class FileInputBuffer extends InputBuffer {
 	}
 
 	@Override
-	public int fetch() throws IOException {
-		int bytesRead = in.read(data);
-
-		currByte = 0;
-		currOffset = 0;
-
-		return bytesRead;
+	public void fetch() throws IOException {
+		bytesRead = in.read(data);
 	}
 
 	@Override
