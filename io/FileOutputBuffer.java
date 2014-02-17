@@ -12,24 +12,17 @@ public class FileOutputBuffer extends OutputBuffer {
 	}
 
 	@Override
-	public int flush() throws IOException {
+	public void flush() throws IOException {
 		if (currByte == 0 && currOffset == 0) {
-			return 0;
+			return;
 		}
-
-		int bytesWritten;
 
 		if (currOffset > 0) {
 			data[currByte] &= (1 << currOffset) - 1;
-			out.write(data, 0, bytesWritten = currByte + 1);
+			out.write(data, 0, currByte + 1);
 		} else {
-			out.write(data, 0, bytesWritten = currByte);
+			out.write(data, 0, currByte);
 		}
-
-		currByte = 0;
-		currOffset = 0;
-
-		return bytesWritten;
 	}
 
 	@Override
